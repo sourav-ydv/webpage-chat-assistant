@@ -22,8 +22,6 @@ MODEL = "openai/gpt-oss-20b"
 
 llm = ChatGroq(model=MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=800)
 
-# Separate instance for structured extraction: more tokens (full spec lists need room),
-# temperature 0 (deterministic — we want consistent structured data, not creative variation).
 extraction_llm = ChatGroq(model=MODEL, api_key=GROQ_API_KEY, temperature=0, max_tokens=2000)
 
 app = FastAPI(title="Webpage Chat Backend")
@@ -35,11 +33,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Page metadata per session (which page is this session talking about) ---
-# { session_id: {"url":, "title":, "page_content":} }
 page_sessions: dict = {}
 
-# --- LangChain-managed chat history, one per session ---
 history_store: dict[str, InMemoryChatMessageHistory] = {}
 
 
@@ -79,19 +74,12 @@ prompt = ChatPromptTemplate.from_messages(
 
 chain = prompt | llm
 
-# Wraps the chain so LangChain automatically loads/saves message history per session_id,
-# instead of us manually appending to a list like before.
 chain_with_history = RunnableWithMessageHistory(
     chain,
     get_session_history,
     input_messages_key="question",
     history_messages_key="history",
 )
-
-
-# --- Phase 3: structured extraction ---
-# Instead of free-form chat, this forces the model to return typed data we can
-# render as a proper UI card, rather than parsing markdown out of a text reply.
 
 class ProductSpec(BaseModel):
     label: str = Field(description="Spec name, e.g. 'Processor', 'RAM'")
@@ -164,7 +152,6 @@ def ingest_page(req: IngestRequest):
         "page_content": req.page_content[:12000],
     }
 
-    # New page in this tab -> old conversation no longer applies to it, start clean.
     if is_new_page and session_id in history_store:
         history_store[session_id].clear()
 
@@ -207,7 +194,6 @@ def extract_product(req: ExtractRequest):
             }
         )
     except Exception:
-        # Model output got truncated/malformed — surface a clean error instead of a raw 500
         raise HTTPException(
             status_code=502,
             detail="Extraction failed — the model's structured output didn't parse. Try again.",
