@@ -4,6 +4,7 @@ const chatLog = document.getElementById("chat-log");
 const pageTitleEl = document.getElementById("page-title");
 const input = document.getElementById("question-input");
 const sendBtn = document.getElementById("send-btn");
+const extractBtn = document.getElementById("extract-btn");
 
 let activeTabId = null;
 
@@ -45,10 +46,12 @@ function formatMarkdown(raw) {
   return html;
 }
 
-function appendMessageDom(text, sender) {
+function appendMessageDom(text, sender, htmlOverride) {
   const div = document.createElement("div");
   div.className = `msg ${sender}`;
-  if (sender === "bot") {
+  if (htmlOverride) {
+    div.innerHTML = htmlOverride;
+  } else if (sender === "bot") {
     div.innerHTML = formatMarkdown(text);
   } else {
     div.textContent = text;
@@ -72,6 +75,14 @@ function addMessage(tabId, text, sender) {
   }
 }
 
+function addStructuredMessage(tabId, html) {
+  const session = getOrCreateSession(tabId);
+  session.messages.push({ html, sender: "bot" });
+  if (tabId === activeTabId) {
+    appendMessageDom(null, "bot", html);
+  }
+}
+
 function renderActiveTab() {
   chatLog.innerHTML = "";
   const session = tabSessions[activeTabId];
@@ -80,7 +91,7 @@ function renderActiveTab() {
     return;
   }
   pageTitleEl.textContent = session.title || session.url || "Loading page...";
-  session.messages.forEach((m) => appendMessageDom(m.text, m.sender));
+  session.messages.forEach((m) => appendMessageDom(m.text, m.sender, m.html));
 }
 
 async function ingestPage(tabId, pageData) {
@@ -139,17 +150,100 @@ async function askQuestion(question) {
   }
 }
 
+async function requestPageContent(tabId) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, { type: "REQUEST_PAGE_CONTENT" });
+  } catch (err) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+      return await chrome.tabs.sendMessage(tabId, { type: "REQUEST_PAGE_CONTENT" });
+    } catch (injectErr) {
+      return null;
+    }
+  }
+}
+
 async function switchToTab(tabId) {
   activeTabId = tabId;
   renderActiveTab();
 
-  try {
-    const pageData = await chrome.tabs.sendMessage(tabId, { type: "REQUEST_PAGE_CONTENT" });
-    if (pageData) await ingestPage(tabId, pageData);
-  } catch (err) {
-    if (!tabSessions[tabId]) {
-      pageTitleEl.textContent = "Can't read this page";
+  const pageData = await requestPageContent(tabId);
+  if (pageData) {
+    await ingestPage(tabId, pageData);
+  } else if (!tabSessions[tabId]) {
+    pageTitleEl.textContent = "Can't read this page";
+  }
+}
+
+function renderProductCard(data) {
+  if (!data.is_product_page) {
+    return `<p>This doesn't look like a product page — nothing to extract here.</p>`;
+  }
+
+  let html = `<div class="product-card">`;
+  html += `<h4>${escapeHtml(data.product_name || "Unknown product")}</h4>`;
+
+  if (data.price || data.original_price || data.discount) {
+    html += `<div class="price-row">`;
+    if (data.price) html += `<span class="price">${escapeHtml(data.price)}</span>`;
+    if (data.original_price && data.original_price !== data.price) {
+      html += `<span class="original-price">${escapeHtml(data.original_price)}</span>`;
     }
+    if (data.discount) html += `<span class="discount">${escapeHtml(data.discount)}</span>`;
+    html += `</div>`;
+  }
+
+  if (data.rating) html += `<div class="rating">⭐ ${escapeHtml(data.rating)}</div>`;
+  if (data.availability) html += `<div class="availability">${escapeHtml(data.availability)}</div>`;
+
+  if (data.key_specs && data.key_specs.length) {
+    html += `<table class="spec-table">`;
+    data.key_specs.forEach((s) => {
+      html += `<tr><td>${escapeHtml(s.label)}</td><td>${escapeHtml(s.value)}</td></tr>`;
+    });
+    html += `</table>`;
+  }
+
+  if (data.pros && data.pros.length) {
+    html += `<div class="pros"><strong>Pros</strong><ul>`;
+    html += data.pros.map((p) => `<li>${escapeHtml(p)}</li>`).join("");
+    html += `</ul></div>`;
+  }
+
+  if (data.cons && data.cons.length) {
+    html += `<div class="cons"><strong>Cons</strong><ul>`;
+    html += data.cons.map((c) => `<li>${escapeHtml(c)}</li>`).join("");
+    html += `</ul></div>`;
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+async function extractProductInfo() {
+  const tabId = activeTabId;
+  const session = tabSessions[tabId];
+  if (!session || !session.sessionId) {
+    addMessage(tabId, "Still loading page content, try again in a second.", "bot");
+    return;
+  }
+
+  extractBtn.disabled = true;
+  extractBtn.textContent = "Extracting...";
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: session.sessionId }),
+    });
+    const data = await res.json();
+    addStructuredMessage(tabId, renderProductCard(data));
+  } catch (err) {
+    addMessage(tabId, "Couldn't extract product info. Is the backend running?", "bot");
+  } finally {
+    extractBtn.disabled = false;
+    extractBtn.textContent = "Extract Product Info";
   }
 }
 
@@ -165,7 +259,6 @@ input.addEventListener("keydown", (e) => {
   }
 });
 
-
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "PAGE_LOADED" && message.tabId != null) {
     ingestPage(message.tabId, message);
@@ -174,6 +267,8 @@ chrome.runtime.onMessage.addListener((message) => {
     delete tabSessions[message.tabId];
   }
 });
+
+extractBtn.addEventListener("click", extractProductInfo);
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   switchToTab(tabId);

@@ -17,6 +17,32 @@ body {
   text-overflow: ellipsis;
 }
 
+#action-row {
+  padding: 8px 12px;
+  background: white;
+  border-bottom: 1px solid #ddd;
+}
+
+#extract-btn {
+  width: 100%;
+  padding: 7px;
+  background: #16a34a;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#extract-btn:disabled {
+  background: #9ca3af;
+  cursor: default;
+}
+
+#extract-btn:hover:not(:disabled) {
+  background: #15803d;
+}
+
 #chat-log {
   flex: 1;
   overflow-y: auto;
@@ -63,6 +89,79 @@ body {
 
 .msg.bot strong {
   font-weight: 600;
+}
+
+.product-card {
+  font-size: 13px;
+}
+
+.product-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.price-row {
+  margin-bottom: 6px;
+}
+
+.price {
+  font-size: 16px;
+  font-weight: 700;
+  color: #16a34a;
+}
+
+.original-price {
+  text-decoration: line-through;
+  color: #888;
+  margin-left: 6px;
+  font-size: 12px;
+}
+
+.discount {
+  margin-left: 6px;
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.rating,
+.availability {
+  font-size: 12px;
+  color: #444;
+  margin-bottom: 4px;
+}
+
+.spec-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.spec-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid #ddd;
+  vertical-align: top;
+}
+
+.spec-table td:first-child {
+  font-weight: 600;
+  width: 40%;
+  color: #333;
+}
+
+.pros ul,
+.cons ul {
+  margin: 4px 0 8px 0;
+  padding-left: 16px;
+}
+
+.pros strong {
+  color: #16a34a;
+}
+
+.cons strong {
+  color: #dc2626;
 }
 
 #input-row {
