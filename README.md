@@ -60,6 +60,18 @@ Verify at `http://localhost:8000/health`.
 ### 4. Use it
 Open any website, click the extension icon, and start asking questions about the page.
 
+## Structured extraction (Phase 3)
+
+Beyond free-form chat, there's a dedicated "Extract Product Info" button that returns
+typed, structured data instead of a text answer — price, discount, rating, a spec table,
+pros/cons — rendered as a proper card rather than parsed out of markdown.
+
+This uses LangChain's `with_structured_output()` bound to a Pydantic schema (`ProductInfo`),
+so the model is constrained to return valid typed data via tool calling, rather than us
+regex-parsing a text response. Runs on a separate `ChatGroq` instance with more output
+tokens and temperature 0, since structured extraction needs room for full spec lists and
+benefits from determinism more than chat does.
+
 ## Design decisions worth knowing about
 
 - **Side panel, not a popup that force-opens on every page.** Chrome doesn't allow extensions to auto-launch UI without a user gesture (anti-spam policy). Once you open the panel, it persists across tab navigation, which gets close to "always available" without violating that.
@@ -69,6 +81,7 @@ Open any website, click the extension icon, and start asking questions about the
 
 ## Known limitations (current phase)
 
-- Long pages are truncated to ~12k characters — no chunking yet 
+- Long pages are truncated to ~12k characters — no chunking yet
 - Chat history lives in memory only — closing the side panel clears it
-- CORS is wide open for local development 
+- CORS is wide open for local development
+- Structured extraction is tuned for shopping/product pages — other page types will mostly return `is_product_page: false`
