@@ -91,6 +91,29 @@ body {
   font-weight: 600;
 }
 
+.msg.bot table.chat-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  font-size: 11px;
+  margin: 8px 0;
+}
+
+.msg.bot table.chat-table th,
+.msg.bot table.chat-table td {
+  border: 1px solid #ccc;
+  padding: 4px 5px;
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.msg.bot table.chat-table th {
+  background: #d0d0d0;
+  font-weight: 600;
+}
+
+/* --- Product extraction card --- */
 .product-card {
   font-size: 13px;
 }
