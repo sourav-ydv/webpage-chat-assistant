@@ -1,4 +1,4 @@
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = "http://localhost:8000"; // swap to your Render URL after deployment
 
 const chatLog = document.getElementById("chat-log");
 const pageTitleEl = document.getElementById("page-title");
@@ -8,6 +8,8 @@ const extractBtn = document.getElementById("extract-btn");
 
 let activeTabId = null;
 
+// Per-tab state lives here for the lifetime of the side panel.
+// tabSessions[tabId] = { sessionId, url, title, messages: [{text, sender}] }
 const tabSessions = {};
 
 function escapeHtml(s) {
@@ -26,8 +28,37 @@ function formatMarkdown(raw) {
     if (listType) { html += `</${listType}>`; listType = null; }
   };
 
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
+  const pipeCount = (l) => (l.match(/\|/g) || []).length;
+  const isTableRow = (l) => pipeCount(l) >= 2;
+  const splitRow = (l) => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const isSeparatorRow = (l) => {
+    const cells = splitRow(l);
+    return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c));
+  };
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+
+    // Markdown table: a row followed by a "---|---|---" separator row
+    if (isTableRow(line) && i + 1 < lines.length && isSeparatorRow(lines[i + 1])) {
+      closeList();
+      const headerCells = splitRow(line);
+      html += `<table class="chat-table"><thead><tr>`;
+      headerCells.forEach((c) => { html += `<th>${c}</th>`; });
+      html += `</tr></thead><tbody>`;
+      i += 2; // skip header row + separator row
+      while (i < lines.length && isTableRow(lines[i].trim())) {
+        const rowCells = splitRow(lines[i].trim());
+        html += `<tr>`;
+        rowCells.forEach((c) => { html += `<td>${c}</td>`; });
+        html += `</tr>`;
+        i += 1;
+      }
+      html += `</tbody></table>`;
+      continue;
+    }
+
     const ulMatch = line.match(/^[-*]\s+(.*)/);
     const olMatch = line.match(/^\d+[.)]\s+(.*)/);
 
@@ -41,11 +72,15 @@ function formatMarkdown(raw) {
       closeList();
       if (line !== "") html += `<p>${line}</p>`;
     }
+    i += 1;
   }
   closeList();
   return html;
 }
 
+// Pure DOM append — does NOT touch tabSessions. Used only when rendering the active tab.
+// htmlOverride is used for programmatically-built content (like the product card) that
+// we don't want run through the markdown formatter meant for model text.
 function appendMessageDom(text, sender, htmlOverride) {
   const div = document.createElement("div");
   div.className = `msg ${sender}`;
@@ -67,6 +102,8 @@ function getOrCreateSession(tabId) {
   return tabSessions[tabId];
 }
 
+// Records a message in the given tab's history, and paints it live only if that
+// tab is the one currently showing in the panel.
 function addMessage(tabId, text, sender) {
   const session = getOrCreateSession(tabId);
   session.messages.push({ text, sender });
@@ -75,6 +112,7 @@ function addMessage(tabId, text, sender) {
   }
 }
 
+// Same idea but for pre-rendered HTML content (product cards), not model markdown text.
 function addStructuredMessage(tabId, html) {
   const session = getOrCreateSession(tabId);
   session.messages.push({ html, sender: "bot" });
@@ -118,11 +156,14 @@ async function ingestPage(tabId, pageData) {
     pageTitleEl.textContent = pageData.title || pageData.url;
   }
 
+  // Only reset the visible chat if this is genuinely the first page in this tab
+  // session. Otherwise (Phase 4), keep the conversation going and just note that
+  // this page's content joined the session's memory.
   if (isNewPage) {
-    session.messages = [{ text: `Ready. Ask me anything about "${pageData.title}".`, sender: "bot" }];
-    if (tabId === activeTabId) {
-      chatLog.innerHTML = "";
-      appendMessageDom(session.messages[0].text, "bot");
+    if (session.messages.length === 0) {
+      addMessage(tabId, `Ready. Ask me anything about "${pageData.title}".`, "bot");
+    } else {
+      addMessage(tabId, `Added "${pageData.title}" to this conversation's memory — ask about it anytime.`, "bot");
     }
   }
 }
@@ -150,6 +191,11 @@ async function askQuestion(question) {
   }
 }
 
+// Ask a tab for its page content. If the content script isn't there yet — this
+// happens for tabs that were already open before the extension was loaded/reloaded,
+// since manifest-declared content scripts only auto-inject on NEW page loads —
+// inject it on demand and retry once. Returns null only for genuinely restricted
+// pages (chrome://, the Web Store, PDF viewer, etc.) where injection itself fails.
 async function requestPageContent(tabId) {
   try {
     return await chrome.tabs.sendMessage(tabId, { type: "REQUEST_PAGE_CONTENT" });
@@ -163,6 +209,7 @@ async function requestPageContent(tabId) {
   }
 }
 
+// Called when the panel first opens, and whenever the user switches to a different tab.
 async function switchToTab(tabId) {
   activeTabId = tabId;
   renderActiveTab();
@@ -243,7 +290,7 @@ async function extractProductInfo() {
     addMessage(tabId, "Couldn't extract product info. Is the backend running?", "bot");
   } finally {
     extractBtn.disabled = false;
-    extractBtn.textContent = "Extract Product Info";
+    extractBtn.textContent = "📊 Extract Product Info";
   }
 }
 
@@ -259,6 +306,7 @@ input.addEventListener("keydown", (e) => {
   }
 });
 
+// A page finished loading somewhere (any tab). Only affects what's on screen if it's the active tab.
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "PAGE_LOADED" && message.tabId != null) {
     ingestPage(message.tabId, message);
@@ -270,10 +318,12 @@ chrome.runtime.onMessage.addListener((message) => {
 
 extractBtn.addEventListener("click", extractProductInfo);
 
+// User switches tabs.
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   switchToTab(tabId);
 });
 
+// Panel just opened — sync to whatever tab is currently active.
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   if (tabs[0]) switchToTab(tabs[0].id);
 });
