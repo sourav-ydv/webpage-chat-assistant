@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_core.documents import Document
-from langchain_community.embeddings import FastEmbedEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
@@ -22,6 +22,8 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not set. Copy .env.example to .env and add your key.")
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 MODEL = "openai/gpt-oss-20b"
 
@@ -61,7 +63,9 @@ _embeddings = None
 def get_embeddings():
     global _embeddings
     if _embeddings is None:
-        _embeddings = FastEmbedEmbeddings()
+        if not GOOGLE_API_KEY:
+            raise RuntimeError("GOOGLE_API_KEY not set. Needed to embed long pages.")
+        _embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001", google_api_key=GOOGLE_API_KEY)
     return _embeddings
 
 
