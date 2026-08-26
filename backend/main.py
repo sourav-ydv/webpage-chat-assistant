@@ -32,7 +32,7 @@ app = FastAPI(title="Webpage Chat Backend")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"chrome-extension://.*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -50,16 +50,23 @@ def get_session_history(session_id: str) -> BaseChatMessageHistory:
     return history_store[session_id]
 
 
-embeddings = FastEmbedEmbeddings()
-
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 
 vector_stores: dict[str, InMemoryVectorStore] = {}
 
+_embeddings = None
+
+
+def get_embeddings():
+    global _embeddings
+    if _embeddings is None:
+        _embeddings = FastEmbedEmbeddings()
+    return _embeddings
+
 
 def get_vector_store(session_id: str) -> InMemoryVectorStore:
     if session_id not in vector_stores:
-        vector_stores[session_id] = InMemoryVectorStore(embeddings)
+        vector_stores[session_id] = InMemoryVectorStore(get_embeddings())
     return vector_stores[session_id]
 
 
