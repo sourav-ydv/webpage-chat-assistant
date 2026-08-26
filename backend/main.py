@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 from typing import List, Optional
 
@@ -202,7 +203,36 @@ class ExtractRequest(BaseModel):
 
 page_store: dict[str, dict[str, dict]] = {}
 
-DIRECT_INCLUDE_CHAR_LIMIT = 4000
+DIRECT_INCLUDE_CHAR_LIMIT = 6000
+
+SESSION_TTL_SECONDS = 30 * 60
+MAX_SESSIONS = 20
+
+last_seen: dict[str, float] = {}
+
+
+def evict_session(session_id: str) -> None:
+    page_sessions.pop(session_id, None)
+    session_pages.pop(session_id, None)
+    history_store.pop(session_id, None)
+    vector_stores.pop(session_id, None)
+    page_store.pop(session_id, None)
+    last_seen.pop(session_id, None)
+
+
+def touch_session(session_id: str) -> None:
+    last_seen[session_id] = time.time()
+
+    now = time.time()
+    stale = [sid for sid, ts in last_seen.items() if now - ts > SESSION_TTL_SECONDS]
+    for sid in stale:
+        evict_session(sid)
+
+    if len(last_seen) > MAX_SESSIONS:
+        oldest = sorted(last_seen.items(), key=lambda kv: kv[1])
+        overflow = len(last_seen) - MAX_SESSIONS
+        for sid, _ in oldest[:overflow]:
+            evict_session(sid)
 
 
 def get_page_context(session_id: str, url: str, search_query: str) -> Optional[str]:
@@ -223,6 +253,7 @@ def get_page_context(session_id: str, url: str, search_query: str) -> Optional[s
 @app.post("/ingest")
 def ingest_page(req: IngestRequest):
     session_id = req.session_id or str(uuid.uuid4())
+    touch_session(session_id)
 
     prev = page_sessions.get(session_id)
     is_new_page = prev is None or prev["url"] != req.url
@@ -260,6 +291,8 @@ def ingest_page(req: IngestRequest):
 def chat(req: ChatRequest):
     if req.session_id not in page_sessions:
         raise HTTPException(status_code=404, detail="Session not found. Call /ingest first.")
+
+    touch_session(req.session_id)
 
     current_page = page_sessions[req.session_id]
     history_messages = get_session_history(req.session_id).messages
@@ -313,6 +346,8 @@ def chat(req: ChatRequest):
 def extract_product(req: ExtractRequest):
     if req.session_id not in page_sessions:
         raise HTTPException(status_code=404, detail="Session not found. Call /ingest first.")
+
+    touch_session(req.session_id)
 
     page = page_sessions[req.session_id]
 
