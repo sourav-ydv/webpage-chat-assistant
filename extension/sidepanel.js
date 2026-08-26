@@ -130,6 +130,16 @@ function renderActiveTab() {
   }
   pageTitleEl.textContent = session.title || session.url || "Loading page...";
   session.messages.forEach((m) => appendMessageDom(m.text, m.sender, m.html));
+
+  if (session.ingesting) {
+    input.disabled = true;
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Loading page...";
+  } else {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Send";
+  }
 }
 
 async function ingestPage(tabId, pageData) {
@@ -138,6 +148,15 @@ async function ingestPage(tabId, pageData) {
 
   session.url = pageData.url;
   session.title = pageData.title;
+
+  if (isNewPage) {
+    session.ingesting = true;
+    if (tabId === activeTabId) {
+      input.disabled = true;
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Loading page...";
+    }
+  }
 
   const res = await fetch(`${BACKEND_URL}/ingest`, {
     method: "POST",
@@ -151,14 +170,15 @@ async function ingestPage(tabId, pageData) {
   });
   const data = await res.json();
   session.sessionId = data.session_id;
+  session.ingesting = false;
 
   if (tabId === activeTabId) {
     pageTitleEl.textContent = pageData.title || pageData.url;
+    input.disabled = false;
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Send";
   }
 
-  // Only reset the visible chat if this is genuinely the first page in this tab
-  // session. Otherwise (Phase 4), keep the conversation going and just note that
-  // this page's content joined the session's memory.
   if (isNewPage) {
     if (session.messages.length === 0) {
       addMessage(tabId, `Ready. Ask me anything about "${pageData.title}".`, "bot");
@@ -171,7 +191,7 @@ async function ingestPage(tabId, pageData) {
 async function askQuestion(question) {
   const tabId = activeTabId;
   const session = tabSessions[tabId];
-  if (!session || !session.sessionId) {
+  if (!session || !session.sessionId || session.ingesting) {
     addMessage(tabId, "Still loading page content, try again in a second.", "bot");
     return;
   }
