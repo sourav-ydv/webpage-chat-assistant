@@ -44,7 +44,7 @@ function formatMarkdown(raw) {
       html += `<table class="chat-table"><thead><tr>`;
       headerCells.forEach((c) => { html += `<th>${c}</th>`; });
       html += `</tr></thead><tbody>`;
-      i += 2; // skip header row + separator row
+      i += 2; 
       while (i < lines.length && isTableRow(lines[i].trim())) {
         const rowCells = splitRow(lines[i].trim());
         html += `<tr>`;
@@ -149,32 +149,43 @@ async function ingestPage(tabId, pageData) {
     }
   }
 
-  const res = await fetch(`${BACKEND_URL}/ingest`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      session_id: session.sessionId,
-      url: pageData.url,
-      title: pageData.title,
-      page_content: pageData.page_content,
-    }),
-  });
-  const data = await res.json();
-  session.sessionId = data.session_id;
-  session.ingesting = false;
+  try {
+    const res = await fetch(`${BACKEND_URL}/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: session.sessionId,
+        url: pageData.url,
+        title: pageData.title,
+        page_content: pageData.page_content,
+      }),
+    });
 
-  if (tabId === activeTabId) {
-    pageTitleEl.textContent = pageData.title || pageData.url;
-    input.disabled = false;
-    sendBtn.disabled = false;
-    sendBtn.textContent = "Send";
-  }
+    if (!res.ok) {
+      throw new Error(`ingest failed: ${res.status}`);
+    }
 
-  if (isNewPage) {
-    if (session.messages.length === 0) {
-      addMessage(tabId, `Ready. Ask me anything about "${pageData.title}".`, "bot");
-    } else {
-      addMessage(tabId, `Added "${pageData.title}" to this conversation's memory — ask about it anytime.`, "bot");
+    const data = await res.json();
+    session.sessionId = data.session_id;
+
+    if (isNewPage) {
+      if (session.messages.length === 0) {
+        addMessage(tabId, `Ready. Ask me anything about "${pageData.title}".`, "bot");
+      } else {
+        addMessage(tabId, `Added "${pageData.title}" to this conversation's memory — ask about it anytime.`, "bot");
+      }
+    }
+  } catch (err) {
+    if (isNewPage) {
+      addMessage(tabId, "Couldn't reach the backend to load this page. It may be waking up from sleep — try again in a few seconds.", "bot");
+    }
+  } finally {
+    session.ingesting = false;
+    if (tabId === activeTabId) {
+      pageTitleEl.textContent = pageData.title || pageData.url;
+      input.disabled = false;
+      sendBtn.disabled = false;
+      sendBtn.textContent = "Send";
     }
   }
 }
@@ -196,9 +207,13 @@ async function askQuestion(question) {
       body: JSON.stringify({ session_id: session.sessionId, question }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      addMessage(tabId, data.detail || "Something went wrong. Try again.", "bot");
+      return;
+    }
     addMessage(tabId, data.answer, "bot");
   } catch (err) {
-    addMessage(tabId, "Error reaching backend. Is it running?", "bot");
+    addMessage(tabId, "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.", "bot");
   }
 }
 
@@ -289,10 +304,14 @@ async function extractProductInfo() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: session.sessionId }),
     });
+    if (!res.ok) {
+      addMessage(tabId, "Extraction failed on the server — try again in a moment.", "bot");
+      return;
+    }
     const data = await res.json();
     addStructuredMessage(tabId, renderProductCard(data));
   } catch (err) {
-    addMessage(tabId, "Couldn't extract product info. Is the backend running?", "bot");
+    addMessage(tabId, "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.", "bot");
   } finally {
     extractBtn.disabled = false;
     extractBtn.textContent = "📊 Extract Product Info";
@@ -322,6 +341,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
 extractBtn.addEventListener("click", extractProductInfo);
 
+// User switches tabs.
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   switchToTab(tabId);
 });

@@ -46,11 +46,19 @@ session_pages: dict = {}
 
 history_store: dict[str, InMemoryChatMessageHistory] = {}
 
+MAX_HISTORY_MESSAGES = 8
+
 
 def get_session_history(session_id: str) -> BaseChatMessageHistory:
     if session_id not in history_store:
         history_store[session_id] = InMemoryChatMessageHistory()
-    return history_store[session_id]
+    hist = history_store[session_id]
+    if len(hist.messages) > MAX_HISTORY_MESSAGES:
+        trimmed = hist.messages[-MAX_HISTORY_MESSAGES:]
+        hist.clear()
+        for m in trimmed:
+            hist.add_message(m)
+    return hist
 
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
@@ -310,44 +318,70 @@ def chat(req: ChatRequest):
     current_url = current_page["url"]
 
     if history_messages:
-        rewritten = contextualize_chain.invoke(
-            {
-                "question": req.question,
-                "current_title": current_page["title"],
-                "history": history_messages,
-            }
-        )
-        search_query = rewritten.content.strip() or req.question
+        try:
+            rewritten = contextualize_chain.invoke(
+                {
+                    "question": req.question,
+                    "current_title": current_page["title"],
+                    "history": history_messages,
+                }
+            )
+            search_query = rewritten.content.strip() or req.question
+        except Exception:
+            search_query = req.question
     else:
         search_query = req.question
 
+    MAX_CONTEXT_CHARS = 6000
+
     context_parts = []
+    total_chars = 0
 
     current_content = get_page_context(req.session_id, current_url, search_query)
     if current_content:
-        context_parts.append(f"[Source: {current_page['title']} — {current_url}]\n{current_content}")
+        block = f"[Source: {current_page['title']} — {current_url}]\n{current_content}"
+        context_parts.append(block)
+        total_chars += len(block)
 
-    for p in pages_visited[-8:]:
+    for p in reversed(pages_visited[-8:]):
         if p["url"] == current_url:
             continue
+        if total_chars >= MAX_CONTEXT_CHARS:
+            break
         content = get_page_context(req.session_id, p["url"], search_query)
-        if content:
-            context_parts.append(f"[Source: {p['title']} — {p['url']}]\n{content}")
+        if not content:
+            continue
+        block = f"[Source: {p['title']} — {p['url']}]\n{content}"
+        remaining = MAX_CONTEXT_CHARS - total_chars
+        if len(block) > remaining:
+            if remaining < 200:
+                break
+            block = block[:remaining]
+        context_parts.append(block)
+        total_chars += len(block)
 
     context_block = "\n\n".join(context_parts) if context_parts else current_page["page_content"][:4000]
 
     visited_pages_block = "\n".join(f"- {p['title']} ({p['url']})" for p in pages_visited) or "- (none yet)"
 
-    result = chain_with_history.invoke(
-        {
-            "question": req.question,
-            "current_title": current_page["title"],
-            "current_url": current_page["url"],
-            "context": context_block,
-            "visited_pages": visited_pages_block,
-        },
-        config={"configurable": {"session_id": req.session_id}},
-    )
+    try:
+        result = chain_with_history.invoke(
+            {
+                "question": req.question,
+                "current_title": current_page["title"],
+                "current_url": current_page["url"],
+                "context": context_block,
+                "visited_pages": visited_pages_block,
+            },
+            config={"configurable": {"session_id": req.session_id}},
+        )
+    except Exception as e:
+        if "rate_limit" in str(e) or "413" in str(e) or "tokens" in str(e).lower():
+            raise HTTPException(
+                status_code=429,
+                detail="The AI model is temporarily rate-limited (too many tokens this minute). Wait a moment and try again.",
+            )
+        raise HTTPException(status_code=502, detail="Something went wrong generating a response. Try again.")
 
     return ChatResponse(answer=result.content)
 
@@ -366,10 +400,15 @@ def extract_product(req: ExtractRequest):
             {
                 "title": page["title"],
                 "url": page["url"],
-                "page_content": page["page_content"][:20000],
+                "page_content": page["page_content"][:6000],
             }
         )
-    except Exception:
+    except Exception as e:
+        if "rate_limit" in str(e) or "413" in str(e) or "tokens" in str(e).lower():
+            raise HTTPException(
+                status_code=429,
+                detail="The AI model is temporarily rate-limited. Wait a moment and try again.",
+            )
         raise HTTPException(
             status_code=502,
             detail="Extraction failed — the model's structured output didn't parse. Try again.",
