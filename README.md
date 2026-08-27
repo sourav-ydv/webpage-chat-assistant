@@ -6,7 +6,9 @@ A Chrome extension that lets you chat with any webpage in real time — ask ques
 
 ## Demo
 
-> Screenshot/GIF placeholder — add a screenshot of the side panel in action here.
+<p align="center">
+  <img src="Demo.png" alt="Webpage Chat Assistant Demo" width="800">
+</p>
 
 **Live backend:** `https://webpage-chat-backend.onrender.com` (Render free tier — the first
 request after 15 minutes of inactivity takes 30-60s to wake up, then responds normally)
