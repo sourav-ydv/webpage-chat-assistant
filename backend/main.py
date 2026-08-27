@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_cohere import CohereEmbeddings
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.chat_history import BaseChatMessageHistory, InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -23,7 +23,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
     raise RuntimeError("GROQ_API_KEY not set. Copy .env.example to .env and add your key.")
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 MODEL = "openai/gpt-oss-20b"
 
@@ -63,9 +63,9 @@ _embeddings = None
 def get_embeddings():
     global _embeddings
     if _embeddings is None:
-        if not GOOGLE_API_KEY:
-            raise RuntimeError("GOOGLE_API_KEY not set. Needed to embed long pages.")
-        _embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-001", google_api_key=GOOGLE_API_KEY)
+        if not COHERE_API_KEY:
+            raise RuntimeError("COHERE_API_KEY not set. Needed to embed long pages.")
+        _embeddings = CohereEmbeddings(model="embed-v4.0", cohere_api_key=COHERE_API_KEY)
     return _embeddings
 
 
@@ -245,12 +245,15 @@ def get_page_context(session_id: str, url: str, search_query: str) -> Optional[s
         return None
     if len(stored["content"]) <= DIRECT_INCLUDE_CHAR_LIMIT:
         return stored["content"]
-    store = get_vector_store(session_id)
-    docs = store.similarity_search(
-        search_query, k=4, filter=lambda d, u=url: d.metadata.get("url") == u
-    )
-    if docs:
-        return "\n\n".join(d.page_content for d in docs)
+    try:
+        store = get_vector_store(session_id)
+        docs = store.similarity_search(
+            search_query, k=4, filter=lambda d, u=url: d.metadata.get("url") == u
+        )
+        if docs:
+            return "\n\n".join(d.page_content for d in docs)
+    except Exception:
+        pass
     return stored["content"][:DIRECT_INCLUDE_CHAR_LIMIT]
 
 
@@ -275,14 +278,17 @@ def ingest_page(req: IngestRequest):
 
     if is_new_page:
         if len(req.page_content) > DIRECT_INCLUDE_CHAR_LIMIT:
-            store = get_vector_store(session_id)
-            chunks = text_splitter.split_text(req.page_content)
-            docs = [
-                Document(page_content=chunk, metadata={"url": req.url, "title": req.title})
-                for chunk in chunks
-            ]
-            if docs:
-                store.add_documents(docs)
+            try:
+                store = get_vector_store(session_id)
+                chunks = text_splitter.split_text(req.page_content)
+                docs = [
+                    Document(page_content=chunk, metadata={"url": req.url, "title": req.title})
+                    for chunk in chunks
+                ]
+                if docs:
+                    store.add_documents(docs)
+            except Exception:
+                pass
 
         pages = session_pages.setdefault(session_id, [])
         if not any(p["url"] == req.url for p in pages):
