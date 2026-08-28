@@ -119,7 +119,7 @@ prompt = ChatPromptTemplate.from_messages(
     [
         ("system", SYSTEM_TEMPLATE),
         MessagesPlaceholder(variable_name="history"),
-        ("human", "{question}\n\n[Answer specifically about \"{current_title}\" using the excerpts above. Do not reuse facts from earlier answers in this conversation unless they also appear in the excerpts.]"),
+        ("human", "{question}\n\n[IMPORTANT: The current page, right now, is \"{current_title}\". This is what \"this product\", \"this one\", and \"current\" always refer to — regardless of what other product was named most recently in this conversation. Answer using the excerpts above, and if the current page's own excerpt is missing facts, say so rather than describing a different page.]"),
     ]
 )
 
@@ -334,31 +334,33 @@ def chat(req: ChatRequest):
 
     MAX_CONTEXT_CHARS = 6000
 
-    context_parts = []
-    total_chars = 0
-
     current_content = get_page_context(req.session_id, current_url, search_query)
+    current_block = None
     if current_content:
-        block = f"[Source: {current_page['title']} — {current_url}]\n{current_content}"
-        context_parts.append(block)
-        total_chars += len(block)
+        current_block = f"[Source: {current_page['title']} — {current_url}]\n{current_content}"
 
+    remaining_budget = MAX_CONTEXT_CHARS - (len(current_block) if current_block else 0)
+
+    other_parts = []
+    total_other = 0
     for p in reversed(pages_visited[-8:]):
         if p["url"] == current_url:
             continue
-        if total_chars >= MAX_CONTEXT_CHARS:
+        if total_other >= remaining_budget:
             break
         content = get_page_context(req.session_id, p["url"], search_query)
         if not content:
             continue
         block = f"[Source: {p['title']} — {p['url']}]\n{content}"
-        remaining = MAX_CONTEXT_CHARS - total_chars
+        remaining = remaining_budget - total_other
         if len(block) > remaining:
             if remaining < 200:
                 break
             block = block[:remaining]
-        context_parts.append(block)
-        total_chars += len(block)
+        other_parts.append(block)
+        total_other += len(block)
+
+    context_parts = other_parts + ([current_block] if current_block else [])
 
     context_block = "\n\n".join(context_parts) if context_parts else current_page["page_content"][:4000]
 
