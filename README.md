@@ -10,6 +10,8 @@ A Chrome extension that lets you chat with any webpage in real time — ask ques
   <img src="Demo.png" alt="Webpage Chat Assistant Demo" width="800">
 </p>
 
+
+
 **Live backend:** `https://webpage-chat-backend.onrender.com` (Render free tier — the first
 request after 15 minutes of inactivity takes 30-60s to wake up, then responds normally)
 
@@ -26,7 +28,7 @@ request after 15 minutes of inactivity takes 30-60s to wake up, then responds no
 - **Extension:** Chrome Manifest V3, Side Panel API, vanilla JS
 - **Backend:** FastAPI (Python)
 - **LLM orchestration:** LangChain (`ChatGroq`, `RunnableWithMessageHistory`, `InMemoryVectorStore`)
-- **Embeddings:** FastEmbed (local, free, no API key)
+- **Embeddings:** Cohere API (hosted, free tier, no card required)
 - **Inference:** Groq API (free tier)
 
 ## Project structure
@@ -71,10 +73,10 @@ Verify at `http://localhost:8000/health`, then change `BACKEND_URL` in
 
 ### Deploying your own backend
 This repo includes a `render.yaml` — connect the repo on [Render](https://render.com)
-as a Blueprint, add your `GROQ_API_KEY` as an environment variable when prompted, and
-it deploys with no manual config. Python version is pinned via `backend/.python-version`
-(3.11) since `pydantic-core` has no prebuilt wheel for newer versions yet, which will
-otherwise fail the build trying to compile from source.
+as a Blueprint, add `GROQ_API_KEY` and `COHERE_API_KEY` as environment variables when
+prompted, and it deploys with no manual config. Python version is pinned via
+`backend/.python-version` (3.11) since `pydantic-core` has no prebuilt wheel for newer
+versions yet, which will otherwise fail the build trying to compile from source.
 
 ## Structured extraction (Phase 3)
 
@@ -94,25 +96,44 @@ The conversation isn't limited to a single page anymore. As you navigate to diff
 pages in the same tab, each page's content joins that session's memory instead of
 replacing it — you can ask a question about a page you looked at five clicks ago.
 
-Every visited page under ~4000 characters is kept in full and injected directly into
+Every visited page under ~6000 characters is kept in full and injected directly into
 the prompt, source-tagged by page title/URL, so the model always has clean, complete
 data per page rather than fragments. Pages longer than that fall back to chunking +
-embeddings (`RecursiveCharacterTextSplitter` + FastEmbed + `InMemoryVectorStore`) with
+embeddings (`RecursiveCharacterTextSplitter` + Cohere + `InMemoryVectorStore`) with
 similarity search against the question — real RAG, but only where it's actually needed,
 since chunking a short structured page (a product spec table) turned out to fragment
 it and cause wrong answers rather than help.
+
+The current page's excerpt is placed last in the context block, closest to the actual
+question, not first — this measurably reduced the model conflating "current product"
+with whatever was named most recently in conversation text, which is a documented
+attention/recency effect in transformer models, not just a data problem.
 
 A follow-up question like "how's this better than the previous one?" gets rewritten
 into a standalone question using chat history before retrieval runs, since vague
 follow-ups barely resemble the actual page content and were causing weak, sometimes
 hallucinated retrieval matches.
 
+To stay under Groq's free-tier rate limit (8000 tokens/minute), both chat history
+(capped to the last 4 turns) and total page context (capped at 6000 characters
+combined across all pages, not just per-page) are hard-bounded — long sessions
+gradually "forget" the earliest exchanges rather than growing the prompt forever.
+
+**Embeddings provider — a real debugging story worth knowing:** this started on a
+local ONNX model (FastEmbed), which caused repeated out-of-memory crashes on Render's
+512MB free tier once any long page triggered it. Swapped to Google's hosted Gemini
+embeddings to remove the local memory cost — but Google's API returned a permission
+error because the free tier now requires a billing account attached, even for
+free-quota usage. Settled on Cohere's embeddings API, which has a genuine free tier
+(1,000 calls/month) with no card required, and is hosted, so it costs us nothing in
+local memory either way.
+
 ## Design decisions worth knowing about
 
 - **Side panel, not a popup that force-opens on every page.** Chrome doesn't allow extensions to auto-launch UI without a user gesture (anti-spam policy). Once you open the panel, it persists across tab navigation, which gets close to "always available" without violating that.
 - **Per-tab session isolation.** Early versions had a bug where chatting about a MacBook listing in one tab would get contaminated by content from a different page opened in another tab. Fixed by tracking chat history and page context per `tabId` in the side panel, rather than relying on broadcast messages alone.
-- **Page facts vs. general knowledge, clearly separated.** The model is instructed to ground answers in the actual page content first, but can supplement with general knowledge (e.g. "is this good for gaming") when asked — and must explicitly flag when it's doing so, rather than blending the two silently.
-- **Lazy-loaded embeddings.** The embedding model only loads into memory on first actual use (a page long enough to need chunking), not at server startup — keeps the deployed instance comfortably inside Render's free-tier 512MB RAM limit for the common case of short product pages.
+- **Page facts vs. general knowledge, clearly separated.** The model grounds answers in actual page content first. For opinion-style questions (e.g. "is this good for gaming," "what are the cons") it will only infer beyond the page when the excerpts genuinely support it, and always flags inference explicitly rather than blending it with page facts — deliberately erring conservative (declining rather than guessing) after earlier testing showed inferred content occasionally reading as fact.
+- **Cohere for embeddings, not a local model.** Originally used a local ONNX model, which caused real OOM crashes on the deployed instance (see the Phase 4 section below). Hosted embeddings avoid that entirely — the trade-off is a monthly call quota instead of a memory ceiling.
 
 ## Deployment (Phase 5)
 
@@ -135,9 +156,10 @@ indicator for this specific case, so it can look stuck rather than slow.
 ## Known limitations
 
 - Chat history and page memory live in server RAM only — a Render free-tier spin-down/restart clears all active sessions (would need Postgres/Redis to persist across restarts)
-- Sessions are evicted after 30 minutes idle or when more than 20 are active at once, to keep memory bounded on the free tier's 512MB limit — this fixed a real OOM crash found during testing, caused by sessions accumulating with no cleanup
-- Once any long page (>6000 chars) triggers the local embedding model, it stays loaded in memory for the process's lifetime — expected, but on a 512MB instance this leaves limited headroom; a real solution if OOM recurs is more RAM (Render's paid tier), not more code
+- Sessions are evicted after 30 minutes idle or when more than 20 are active at once, to keep memory bounded on the free tier — this fixed a real OOM crash found during testing, caused by sessions accumulating with no cleanup
+- Chat history is capped to the last 4 turns and total page context to 6000 characters combined, to stay under Groq's free-tier 8000 tokens/minute limit — long conversations gradually lose their earliest exchanges rather than the request growing unbounded
+- Cohere's free embeddings tier is 1,000 calls/month — each call embeds a whole page's chunks at once, so this covers roughly 1,000 long-page visits/month, generous for personal use but a real ceiling under heavier use
 - Structured extraction is tuned for shopping/product pages — other page types will mostly return `is_product_page: false`
-- Occasionally, when two pages are asked the same/similar question back-to-back, the model leans on its previous answer instead of the new page's context (an LLM recency-bias tendency, not a missing-data bug — verified by testing that full multi-page comparisons across 3+ pages retrieve and attribute data correctly). Mitigated with an explicit per-turn reminder of which page is "current," not fully eliminated
+- Asked directly for cons/downsides not stated on a page, the model now declines rather than inferring likely ones — a deliberate conservative choice (see Design decisions above) over a more helpful-but-riskier alternative
 - No loading indicator for the Render cold-start delay specifically — a slow first response can look like a hang
 - Extension isn't published to the Chrome Web Store — load-unpacked only, since publishing requires a one-time $5 developer fee and review process out of scope for this project
