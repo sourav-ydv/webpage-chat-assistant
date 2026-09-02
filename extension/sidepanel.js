@@ -314,7 +314,7 @@ async function extractProductInfo() {
     addMessage(tabId, "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.", "bot");
   } finally {
     extractBtn.disabled = false;
-    extractBtn.textContent = "📊 Extract Product Info";
+    extractBtn.textContent = "Extract Product Info";
   }
 }
 
@@ -341,7 +341,6 @@ chrome.runtime.onMessage.addListener((message) => {
 
 extractBtn.addEventListener("click", extractProductInfo);
 
-// User switches tabs.
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   switchToTab(tabId);
 });
