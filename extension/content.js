@@ -16,6 +16,31 @@ function announcePageLoaded() {
 
 announcePageLoaded();
 
+let lastUrl = window.location.href;
+
+function handlePossibleNavigation() {
+  if (window.location.href !== lastUrl) {
+    lastUrl = window.location.href;
+    setTimeout(announcePageLoaded, 400);
+  }
+}
+
+const originalPushState = history.pushState;
+history.pushState = function (...args) {
+  const result = originalPushState.apply(this, args);
+  handlePossibleNavigation();
+  return result;
+};
+
+const originalReplaceState = history.replaceState;
+history.replaceState = function (...args) {
+  const result = originalReplaceState.apply(this, args);
+  handlePossibleNavigation();
+  return result;
+};
+
+window.addEventListener("popstate", handlePossibleNavigation);
+
 let lastLength = document.body.innerText.length;
 const observer = new MutationObserver(() => {
   const newLength = document.body.innerText.length;
