@@ -14,39 +14,43 @@ function announcePageLoaded() {
   chrome.runtime.sendMessage({ type: "PAGE_LOADED", ...extractPageContent() });
 }
 
-announcePageLoaded();
-
 let lastUrl = window.location.href;
+let debounceTimer = null;
 
-function handlePossibleNavigation() {
-  if (window.location.href !== lastUrl) {
+function scheduleAnnounce() {
+  if (debounceTimer) clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
     lastUrl = window.location.href;
-    setTimeout(announcePageLoaded, 400);
-  }
+    announcePageLoaded();
+  }, 500);
 }
+
+announcePageLoaded();
 
 const originalPushState = history.pushState;
 history.pushState = function (...args) {
   const result = originalPushState.apply(this, args);
-  handlePossibleNavigation();
+  if (window.location.href !== lastUrl) scheduleAnnounce();
   return result;
 };
 
 const originalReplaceState = history.replaceState;
 history.replaceState = function (...args) {
   const result = originalReplaceState.apply(this, args);
-  handlePossibleNavigation();
+  if (window.location.href !== lastUrl) scheduleAnnounce();
   return result;
 };
 
-window.addEventListener("popstate", handlePossibleNavigation);
+window.addEventListener("popstate", () => {
+  if (window.location.href !== lastUrl) scheduleAnnounce();
+});
 
 let lastLength = document.body.innerText.length;
 const observer = new MutationObserver(() => {
   const newLength = document.body.innerText.length;
   if (Math.abs(newLength - lastLength) > 200) {
     lastLength = newLength;
-    announcePageLoaded();
+    scheduleAnnounce();
   }
 });
 observer.observe(document.body, { childList: true, subtree: true });
