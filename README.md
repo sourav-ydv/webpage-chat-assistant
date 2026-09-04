@@ -10,8 +10,6 @@ A Chrome extension that lets you chat with any webpage in real time — ask ques
   <img src="Demo.png" alt="Webpage Chat Assistant Demo" width="800">
 </p>
 
-
-
 **Live backend:** `https://webpage-chat-backend.onrender.com` (Render free tier — the first
 request after 15 minutes of inactivity takes 30-60s to wake up, then responds normally)
 
@@ -127,6 +125,24 @@ error because the free tier now requires a billing account attached, even for
 free-quota usage. Settled on Cohere's embeddings API, which has a genuine free tier
 (1,000 calls/month) with no card required, and is hosted, so it costs us nothing in
 local memory either way.
+
+**Detecting page changes on single-page-app sites — another real bug, not obvious
+until it broke.** The content script originally detected navigation by watching for
+a content-length change over 200 characters. This worked for regular page loads but
+silently failed on SPA sites like Flipkart, where clicking through to a different
+product uses `history.pushState` instead of a real page reload — and two different
+products' spec tables are often close enough in length that the delta never crossed
+the threshold. The extension would keep believing you were on the old product,
+answering questions about a page you'd already left.
+
+Fixed by detecting navigation directly: patching `history.pushState`/`replaceState`
+and listening for `popstate`, the same mechanism the URL bar itself relies on,
+instead of inferring a page change from how much text moved around. That fix then
+exposed a second issue — the old length-based detector and the new URL-based one
+would occasionally both fire for the same navigation, milliseconds apart, with the
+first one grabbing a half-rendered page before the SPA finished updating the DOM.
+Both detectors now funnel into a single debounced extraction: any trigger resets a
+500ms timer, so only one extraction fires, after the page has actually settled.
 
 ## Design decisions worth knowing about
 
