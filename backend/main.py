@@ -334,31 +334,38 @@ def chat(req: ChatRequest):
 
     MAX_CONTEXT_CHARS = 6000
 
+    other_pages = [p for p in pages_visited[-8:] if p["url"] != current_url]
+
+    if other_pages:
+        current_budget = int(MAX_CONTEXT_CHARS * 0.5)
+        other_total_budget = MAX_CONTEXT_CHARS - current_budget
+    else:
+        current_budget = MAX_CONTEXT_CHARS
+        other_total_budget = 0
+
     current_content = get_page_context(req.session_id, current_url, search_query)
     current_block = None
     if current_content:
-        current_block = f"[Source: {current_page['title']} — {current_url}]\n{current_content}"
-
-    remaining_budget = MAX_CONTEXT_CHARS - (len(current_block) if current_block else 0)
+        trimmed_current = current_content[:current_budget]
+        current_block = f"[Source: {current_page['title']} — {current_url}]\n{trimmed_current}"
 
     other_parts = []
-    total_other = 0
-    for p in reversed(pages_visited[-8:]):
-        if p["url"] == current_url:
-            continue
-        if total_other >= remaining_budget:
-            break
-        content = get_page_context(req.session_id, p["url"], search_query)
-        if not content:
-            continue
-        block = f"[Source: {p['title']} — {p['url']}]\n{content}"
-        remaining = remaining_budget - total_other
-        if len(block) > remaining:
-            if remaining < 200:
+    if other_pages and other_total_budget > 0:
+        per_page_budget = max(other_total_budget // len(other_pages), 400)
+        total_other = 0
+        for p in reversed(other_pages):
+            if total_other >= other_total_budget:
                 break
-            block = block[:remaining]
-        other_parts.append(block)
-        total_other += len(block)
+            content = get_page_context(req.session_id, p["url"], search_query)
+            if not content:
+                continue
+            remaining_for_this = min(per_page_budget, other_total_budget - total_other)
+            if remaining_for_this < 100:
+                break
+            trimmed = content[:remaining_for_this]
+            block = f"[Source: {p['title']} — {p['url']}]\n{trimmed}"
+            other_parts.append(block)
+            total_other += len(block)
 
     context_parts = other_parts + ([current_block] if current_block else [])
 
