@@ -44,7 +44,7 @@ function formatMarkdown(raw) {
       html += `<table class="chat-table"><thead><tr>`;
       headerCells.forEach((c) => { html += `<th>${c}</th>`; });
       html += `</tr></thead><tbody>`;
-      i += 2; 
+      i += 2;
       while (i < lines.length && isTableRow(lines[i].trim())) {
         const rowCells = splitRow(lines[i].trim());
         html += `<tr>`;
@@ -133,6 +133,16 @@ function renderActiveTab() {
   }
 }
 
+async function fetchWithTimeout(url, options, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function ingestPage(tabId, pageData) {
   const session = getOrCreateSession(tabId);
   const isNewPage = session.url !== pageData.url;
@@ -150,7 +160,7 @@ async function ingestPage(tabId, pageData) {
   }
 
   try {
-    const res = await fetch(`${BACKEND_URL}/ingest`, {
+    const res = await fetchWithTimeout(`${BACKEND_URL}/ingest`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -177,7 +187,10 @@ async function ingestPage(tabId, pageData) {
     }
   } catch (err) {
     if (isNewPage) {
-      addMessage(tabId, "Couldn't reach the backend to load this page. It may be waking up from sleep — try again in a few seconds.", "bot");
+      const msg = err.name === "AbortError"
+        ? "The backend took too long to respond and the request timed out. Try again."
+        : "Couldn't reach the backend to load this page. It may be waking up from sleep — try again in a few seconds.";
+      addMessage(tabId, msg, "bot");
     }
   } finally {
     session.ingesting = false;
@@ -201,7 +214,7 @@ async function askQuestion(question) {
   input.value = "";
 
   try {
-    const res = await fetch(`${BACKEND_URL}/chat`, {
+    const res = await fetchWithTimeout(`${BACKEND_URL}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: session.sessionId, question }),
@@ -213,7 +226,10 @@ async function askQuestion(question) {
     }
     addMessage(tabId, data.answer, "bot");
   } catch (err) {
-    addMessage(tabId, "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.", "bot");
+    const msg = err.name === "AbortError"
+      ? "The backend took too long to respond and the request timed out. Try again."
+      : "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.";
+    addMessage(tabId, msg, "bot");
   }
 }
 
@@ -299,7 +315,7 @@ async function extractProductInfo() {
   extractBtn.textContent = "Extracting...";
 
   try {
-    const res = await fetch(`${BACKEND_URL}/extract`, {
+    const res = await fetchWithTimeout(`${BACKEND_URL}/extract`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: session.sessionId }),
@@ -311,7 +327,10 @@ async function extractProductInfo() {
     const data = await res.json();
     addStructuredMessage(tabId, renderProductCard(data));
   } catch (err) {
-    addMessage(tabId, "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.", "bot");
+    const msg = err.name === "AbortError"
+      ? "The backend took too long to respond and the request timed out. Try again."
+      : "Couldn't reach the backend. It may be waking up from sleep — wait a few seconds and try again.";
+    addMessage(tabId, msg, "bot");
   } finally {
     extractBtn.disabled = false;
     extractBtn.textContent = "Extract Product Info";
@@ -343,6 +362,18 @@ extractBtn.addEventListener("click", extractProductInfo);
 
 chrome.tabs.onActivated.addListener(({ tabId }) => {
   switchToTab(tabId);
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (!changeInfo.url) return;
+  const session = tabSessions[tabId];
+  if (session && session.url === changeInfo.url) return;
+  setTimeout(async () => {
+    const pageData = await requestPageContent(tabId);
+    if (pageData) {
+      await ingestPage(tabId, pageData);
+    }
+  }, 600);
 });
 
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
