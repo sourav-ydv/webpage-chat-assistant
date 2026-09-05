@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Webpage Chat",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Chat with any webpage in real time.",
   "permissions": ["sidePanel", "activeTab", "scripting", "storage", "tabs"],
   "host_permissions": ["<all_urls>"],
