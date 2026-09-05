@@ -10,22 +10,6 @@ function extractPageContent() {
   };
 }
 
-function announcePageLoaded() {
-  chrome.runtime.sendMessage({ type: "PAGE_LOADED", ...extractPageContent() });
-}
-
-announcePageLoaded();
-
-let lastLength = document.body.innerText.length;
-const observer = new MutationObserver(() => {
-  const newLength = document.body.innerText.length;
-  if (Math.abs(newLength - lastLength) > 200) {
-    lastLength = newLength;
-    announcePageLoaded();
-  }
-});
-observer.observe(document.body, { childList: true, subtree: true });
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "REQUEST_PAGE_CONTENT") {
     sendResponse(extractPageContent());

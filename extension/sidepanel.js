@@ -350,9 +350,6 @@ input.addEventListener("keydown", (e) => {
 });
 
 chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "PAGE_LOADED" && message.tabId != null) {
-    ingestPage(message.tabId, message);
-  }
   if (message.type === "TAB_CLOSED" && message.tabId != null) {
     delete tabSessions[message.tabId];
   }

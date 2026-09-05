@@ -27,7 +27,7 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 
 MODEL = "openai/gpt-oss-20b"
 
-llm = ChatGroq(model=MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=800)
+llm = ChatGroq(model=MODEL, api_key=GROQ_API_KEY, temperature=0.3, max_tokens=800, model_kwargs={"frequency_penalty": 0.4})
 
 extraction_llm = ChatGroq(model=MODEL, api_key=GROQ_API_KEY, temperature=0, max_tokens=2000)
 
